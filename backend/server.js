@@ -1,67 +1,66 @@
 const express = require('express');
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
-const { open } = require('sqlite');
-const path = require('path');
+const mongoose = require('mongoose');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/bookshelf';
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Database setup
-let db;
-(async () => {
-  db = await open({
-    filename: path.join(__dirname, 'database.sqlite'),
-    driver: sqlite3.Database
-  });
+// Initialize MongoDB Connection
+mongoose.connect(MONGO_URI)
+  .then(() => console.log(`Successfully connected to MongoDB at ${MONGO_URI}`))
+  .catch(err => console.error('Error connecting to MongoDB:', err));
 
-  // Create tables if they don't exist
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS books (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      subject TEXT NOT NULL,
-      condition TEXT NOT NULL,
-      owner_id TEXT NOT NULL,
-      claimed_by_id TEXT,
-      status TEXT DEFAULT 'available',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(owner_id) REFERENCES users(id),
-      FOREIGN KEY(claimed_by_id) REFERENCES users(id)
-    );
-  `);
-  
-  // Seed basic users for testing
-  await db.exec(`
-    INSERT OR IGNORE INTO users (id, name) VALUES ('user1', 'Alice');
-    INSERT OR IGNORE INTO users (id, name) VALUES ('user2', 'Bob');
-    INSERT OR IGNORE INTO users (id, name) VALUES ('user3', 'Charlie');
-  `);
-})();
+// Define Mongoose Schema and Model
+const bookSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  subject: { type: String, required: true },
+  condition: { type: String, required: true },
+  owner_id: { type: String, required: true },
+  claimed_by_id: { type: String, default: null },
+  status: { type: String, enum: ['available', 'claimed'], default: 'available' },
+}, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
+
+// Virtual for id mapping since frontend expects 'id' and Mongo uses '_id'
+bookSchema.set('toJSON', {
+  virtuals: true,
+  transform: (doc, ret) => {
+    ret.id = ret._id;
+    delete ret._id;
+    delete ret.__v;
+  }
+});
+
+const Book = mongoose.model('Book', bookSchema);
+
+// In our mocked system, we don't have a real users table, so we just pass names from the frontend.
+const MOCK_USERS = {
+  'user1': 'Alice',
+  'user2': 'Bob',
+  'user3': 'Charlie'
+};
 
 // -- Endpoints --
 
 // Get all available books
 app.get('/api/books', async (req, res) => {
   try {
-    // We want to fetch all books that are available, including owner's name
-    const books = await db.all(`
-      SELECT b.*, u.name as owner_name 
-      FROM books b 
-      JOIN users u ON b.owner_id = u.id 
-      WHERE b.status = 'available'
-      ORDER BY b.created_at DESC
-    `);
-    res.json(books);
+    const books = await Book.find({ status: 'available' }).sort({ created_at: -1 });
+    
+    // Attach owner_name from mock
+    const booksWithNames = books.map(book => {
+      const bookObj = book.toJSON();
+      bookObj.owner_name = MOCK_USERS[bookObj.owner_id] || bookObj.owner_id;
+      return bookObj;
+    });
+    
+    res.json(booksWithNames);
   } catch (error) {
+    console.error('Error fetching books:', error);
     res.status(500).json({ error: 'Failed to fetch books' });
   }
 });
@@ -74,20 +73,21 @@ app.post('/api/books', async (req, res) => {
   }
   
   try {
-    // Ensure the user exists (just a safety check for our mock system)
-    const user = await db.get('SELECT id FROM users WHERE id = ?', [owner_id]);
-    if (!user) {
-       // Auto-create user if they don't exist for ease of testing
-       await db.run('INSERT INTO users (id, name) VALUES (?, ?)', [owner_id, owner_id]);
-    }
-
-    const result = await db.run(
-      'INSERT INTO books (title, subject, condition, owner_id) VALUES (?, ?, ?, ?)',
-      [title, subject, condition, owner_id]
-    );
-    const newBook = await db.get('SELECT * FROM books WHERE id = ?', [result.lastID]);
-    res.status(201).json(newBook);
+    const newBook = await Book.create({
+      title,
+      subject,
+      condition,
+      owner_id,
+      claimed_by_id: null,
+      status: 'available'
+    });
+    
+    const bookObj = newBook.toJSON();
+    bookObj.owner_name = MOCK_USERS[owner_id] || owner_id;
+    
+    res.status(201).json(bookObj);
   } catch (error) {
+    console.error('Error creating book:', error);
     res.status(500).json({ error: 'Failed to create book listing' });
   }
 });
@@ -102,28 +102,25 @@ app.post('/api/books/:id/claim', async (req, res) => {
   }
 
   try {
-    // Basic ownership check & single-claim state transition lock
-    // Fetch the current book state before trying to update.
-    const book = await db.get('SELECT * FROM books WHERE id = ?', [id]);
-    
+    const book = await Book.findById(id);
     if (!book) return res.status(404).json({ error: 'Book not found' });
     if (book.status === 'claimed') return res.status(400).json({ error: 'Book is already claimed' });
     if (book.owner_id === user_id) return res.status(400).json({ error: 'You cannot claim your own book' });
     
-    // We include 'status = "available"' in the WHERE clause for atomic update in case of concurrency
-    const result = await db.run(
-      'UPDATE books SET status = ?, claimed_by_id = ? WHERE id = ? AND status = ?',
-      ['claimed', user_id, id, 'available']
+    // Use findOneAndUpdate with status condition to ensure atomicity and prevent race conditions
+    const updatedBook = await Book.findOneAndUpdate(
+      { _id: id, status: 'available' },
+      { status: 'claimed', claimed_by_id: user_id },
+      { new: true }
     );
     
-    if (result.changes === 0) {
+    if (!updatedBook) {
       return res.status(400).json({ error: 'Failed to claim book. It may have just been claimed by someone else.' });
     }
     
-    // Fetch the updated book
-    const updatedBook = await db.get('SELECT * FROM books WHERE id = ?', [id]);
-    res.json(updatedBook);
+    res.json(updatedBook.toJSON());
   } catch (error) {
+    console.error('Error claiming book:', error);
     res.status(500).json({ error: 'Failed to claim book' });
   }
 });
@@ -132,12 +129,10 @@ app.post('/api/books/:id/claim', async (req, res) => {
 app.get('/api/users/:userId/listings', async (req, res) => {
   const { userId } = req.params;
   try {
-    const listings = await db.all(
-      'SELECT * FROM books WHERE owner_id = ? ORDER BY created_at DESC', 
-      [userId]
-    );
-    res.json(listings);
+    const listings = await Book.find({ owner_id: userId }).sort({ created_at: -1 });
+    res.json(listings.map(l => l.toJSON()));
   } catch (error) {
+    console.error('Error fetching user listings:', error);
     res.status(500).json({ error: 'Failed to fetch listings' });
   }
 });
@@ -146,12 +141,17 @@ app.get('/api/users/:userId/listings', async (req, res) => {
 app.get('/api/users/:userId/claims', async (req, res) => {
   const { userId } = req.params;
   try {
-    const claims = await db.all(
-      'SELECT b.*, u.name as owner_name FROM books b JOIN users u ON b.owner_id = u.id WHERE b.claimed_by_id = ? ORDER BY b.created_at DESC', 
-      [userId]
-    );
-    res.json(claims);
+    const claims = await Book.find({ claimed_by_id: userId }).sort({ created_at: -1 });
+    
+    const claimsWithNames = claims.map(book => {
+      const bookObj = book.toJSON();
+      bookObj.owner_name = MOCK_USERS[bookObj.owner_id] || bookObj.owner_id;
+      return bookObj;
+    });
+    
+    res.json(claimsWithNames);
   } catch (error) {
+    console.error('Error fetching user claims:', error);
     res.status(500).json({ error: 'Failed to fetch claims' });
   }
 });
@@ -159,23 +159,22 @@ app.get('/api/users/:userId/claims', async (req, res) => {
 // Delete a book listing (only if available)
 app.delete('/api/books/:id', async (req, res) => {
   const { id } = req.params;
-  // Use a query parameter for this simple app to simulate authentication
   const user_id = req.query.user_id; 
 
   try {
-    const book = await db.get('SELECT * FROM books WHERE id = ?', [id]);
+    const book = await Book.findById(id);
     if (!book) return res.status(404).json({ error: 'Book not found' });
     if (book.owner_id !== user_id) return res.status(403).json({ error: 'Unauthorized to delete this listing' });
     if (book.status === 'claimed') return res.status(400).json({ error: 'Cannot delete a claimed book' });
     
-    await db.run('DELETE FROM books WHERE id = ?', [id]);
+    await Book.findByIdAndDelete(id);
     res.json({ message: 'Book listing deleted successfully' });
   } catch (error) {
+    console.error('Error deleting book:', error);
     res.status(500).json({ error: 'Failed to delete book' });
   }
 });
 
 app.listen(PORT, () => {
-  // We keep one setup log message
-  console.log(\`Server is running on port \${PORT}\`);
+  console.log(`Server is running on port ${PORT}`);
 });
