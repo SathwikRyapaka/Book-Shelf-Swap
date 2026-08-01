@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
+import axios from 'axios';
 import { useDispatch, useSelector } from 'react-redux';
-import { fetchAvailableBooks, claimBook } from '../store/availableBooksSlice';
+import { setBooks, setLoading, setError, removeBook } from '../store/availableBooksSlice';
+import { API_BASE_URL } from '../App.jsx';
 
 export default function Home() {
   const dispatch = useDispatch();
@@ -8,11 +10,30 @@ export default function Home() {
   const { currentUser } = useSelector((state) => state.auth);
 
   useEffect(() => {
-    dispatch(fetchAvailableBooks());
+    const fetchBooks = async () => {
+      dispatch(setLoading(true));
+      try {
+        const response = await axios.get(`${API_BASE_URL}/books`);
+        // setBooks automatically sets loading to false based on our reducer
+        dispatch(setBooks(response.data));
+        dispatch(setLoading(false));
+      } catch (err) {
+        dispatch(setError('Failed to fetch available books. Please try again later.'));
+        dispatch(setLoading(false));
+      }
+    };
+    
+    fetchBooks();
   }, [dispatch]);
 
-  const handleClaim = (bookId) => {
-    dispatch(claimBook(bookId));
+  const handleClaim = async (bookId) => {
+    try {
+      dispatch(setError(null));
+      await axios.post(`${API_BASE_URL}/books/${bookId}/claim`, { user_id: currentUser.id });
+      dispatch(removeBook(bookId));
+    } catch (err) {
+      dispatch(setError(err.response?.data?.error || 'Failed to claim the book.'));
+    }
   };
 
   if (loading) {

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
+import axios from 'axios';
 import { useDispatch, useSelector } from 'react-redux';
-import { fetchMyListings, addListing, deleteListing } from '../store/listingsSlice';
+import { setListings, setLoading, setError, addListing, removeListing } from '../store/listingsSlice';
+import { API_BASE_URL } from '../App.jsx';
 
 export default function MyListings() {
   const dispatch = useDispatch();
@@ -13,19 +15,48 @@ export default function MyListings() {
   const [condition, setCondition] = useState('Good');
 
   useEffect(() => {
-    dispatch(fetchMyListings());
+    const fetchListings = async () => {
+      dispatch(setLoading(true));
+      try {
+        const response = await axios.get(`${API_BASE_URL}/users/${currentUser.id}/listings`);
+        dispatch(setListings(response.data));
+        dispatch(setLoading(false));
+      } catch (err) {
+        dispatch(setError('Failed to fetch your listings.'));
+        dispatch(setLoading(false));
+      }
+    };
+
+    fetchListings();
   }, [dispatch, currentUser.id]);
 
   const handleAddBook = async (e) => {
     e.preventDefault();
-    await dispatch(addListing({ title, subject, condition }));
-    setTitle('');
-    setSubject('');
-    setCondition('Good');
+    try {
+      dispatch(setError(null));
+      const response = await axios.post(`${API_BASE_URL}/books`, {
+        title,
+        subject,
+        condition,
+        owner_id: currentUser.id
+      });
+      dispatch(addListing(response.data));
+      setTitle('');
+      setSubject('');
+      setCondition('Good');
+    } catch (err) {
+      dispatch(setError(err.response?.data?.error || 'Failed to add book.'));
+    }
   };
 
-  const handleDelete = (id) => {
-    dispatch(deleteListing(id));
+  const handleDelete = async (id) => {
+    try {
+      dispatch(setError(null));
+      await axios.delete(`${API_BASE_URL}/books/${id}?user_id=${currentUser.id}`);
+      dispatch(removeListing(id));
+    } catch (err) {
+      dispatch(setError(err.response?.data?.error || 'Failed to delete book.'));
+    }
   };
 
   return (

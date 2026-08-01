@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
+import axios from 'axios';
 import { useDispatch, useSelector } from 'react-redux';
-import { fetchMyClaims } from '../store/claimsSlice';
+import { setClaims, setLoading, setError } from '../store/claimsSlice';
+import { API_BASE_URL } from '../App.jsx';
 
 export default function MyClaims() {
   const dispatch = useDispatch();
@@ -8,7 +10,19 @@ export default function MyClaims() {
   const { currentUser } = useSelector((state) => state.auth);
 
   useEffect(() => {
-    dispatch(fetchMyClaims());
+    const fetchClaims = async () => {
+      dispatch(setLoading(true));
+      try {
+        const response = await axios.get(`${API_BASE_URL}/users/${currentUser.id}/claims`);
+        dispatch(setClaims(response.data));
+        dispatch(setLoading(false));
+      } catch (err) {
+        dispatch(setError('Failed to fetch your claims.'));
+        dispatch(setLoading(false));
+      }
+    };
+
+    fetchClaims();
   }, [dispatch, currentUser.id]);
 
   if (loading) {
