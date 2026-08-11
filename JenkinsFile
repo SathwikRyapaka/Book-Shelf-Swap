@@ -1,9 +1,8 @@
-```groovy
 pipeline {
     agent any
 
     tools {
-        nodejs 'NodeJS-20'
+        nodejs 'Node'
     }
 
     environment {
@@ -38,7 +37,7 @@ pipeline {
         stage('Backend Test') {
             steps {
                 dir('backend') {
-                    bat 'npm test'
+                    bat 'npm test -- --runInBand'
                 }
             }
         }
@@ -94,4 +93,3 @@ pipeline {
         }
     }
 }
-```
