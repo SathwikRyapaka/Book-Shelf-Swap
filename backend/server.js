@@ -39,9 +39,9 @@ const Book = mongoose.model('Book', bookSchema);
 
 // In our mocked system, we don't have a real users table, so we just pass names from the frontend.
 const MOCK_USERS = {
-  'user1': 'Alice',
-  'user2': 'Bob',
-  'user3': 'Charlie'
+  'user1': 'Sathwik',
+  'user2': 'Revan',
+  'user3': 'Rohit'
 };
 
 // -- Endpoints --

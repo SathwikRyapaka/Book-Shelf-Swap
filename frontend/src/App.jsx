@@ -37,8 +37,8 @@ function App() {
               </div>
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <UserCircle className="h-5 w-5" />
-                  <span>Viewing as:</span>
+                  <UserCircle className="h-7 w-7" />
+                  <span>Viewing:</span>
                   <select 
                     className="ml-2 block w-full pl-3 pr-10 py-1 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md bg-gray-50"
                     value={currentUser.id}
