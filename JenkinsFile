@@ -35,12 +35,17 @@ pipeline {
         }
 
         stage('Backend Test') {
-            steps {
-                dir('backend') {
-                    bat 'npm test -- --runInBand'
-                }
-            }
+    steps {
+        dir('backend') {
+            bat 'echo Current directory:'
+            bat 'cd'
+            bat 'echo Package scripts:'
+            bat 'npm run'
+            bat 'echo Running tests:'
+            bat 'npm test -- --runInBand'
         }
+    }
+}
 
         stage('Frontend Install') {
             steps {
